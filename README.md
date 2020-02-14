@@ -18,3 +18,22 @@ The Open Service Broker API aims to provide an easy way to extend this service c
 The Open Service Broker API has been first defined and used by Pivotal in its Cloud Foundry solution. Then the specification has been opened, so service offering provider can integrate with many Cloud solution. For example, [the Kubernetes Service Catalog ISG](https://svc-cat.io/) is responsible of integration with Kubernetes.
 
 If you want more information, please visit: https://www.openservicebrokerapi.org/
+
+
+
+## How to process ?
+
+It currently exists some framework to help you develop an Open Service Broker without to deal with low level (HTTP-based API) consideration:
+
+* [Spring Cloud Open Service Broker](https://spring.io/projects/spring-cloud-open-service-broker) (JVM)
+* [brokerapi](https://github.com/pivotal-cf/brokerapi) (Go)
+* [Open Service Broker API for .NET](https://github.com/AXOOM/OpenServiceBroker) (.Net)
+
+So, idea is to provide a library crate handling HTTP API and delegating calls to some abstractions (i.e. `trait`).
+
+Following Test-Driven Development, we will:
+
+1. right some tests,
+1. implements them,
+1. optionally improves written code,
+1. and going back to (1) until specification coverage is complete
