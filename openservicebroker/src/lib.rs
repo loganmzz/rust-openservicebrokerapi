@@ -1,3 +1,13 @@
+use actix_web::{HttpRequest, HttpResponse};
+
+struct Catalog {
+    services: Vec<()>,
+}
+
+async fn get_catalog(_req: HttpRequest) -> HttpResponse<Catalog> {
+    HttpResponse::Ok().message_body(Catalog { services: vec![] })
+}
+
 #[cfg(test)]
 mod tests {
     use actix_web::{http, test, dev::ResponseBody};

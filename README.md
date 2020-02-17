@@ -91,3 +91,54 @@ mod tests {
 ```
 
 As usual in TDD, it won't compile as our code is empty. You can run `cargo build --tests` if you don't trust me !
+
+### GREEN step
+
+So let's add `get_catalog` function and `Catalog` struct:
+
+```rust
+use actix_web::{HttpRequest, HttpResponse};
+
+struct Catalog {
+    services: Vec<()>,
+}
+
+async fn get_catalog(_req: HttpRequest) -> HttpResponse<Catalog> {
+    HttpResponse::Ok().message_body(Catalog { services: vec![] })
+}
+```
+
+Now, it's time to check for THE green status, run `cargo test`. You should have something like:
+
+```text
+   Compiling openservicebroker v0.1.0 (/home/logan/projects/openservicebroker)
+warning: struct is never constructed: `Catalog`
+ --> src/lib.rs:4:8
+  |
+4 | struct Catalog {
+  |        ^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+warning: function is never used: `get_catalog`
+ --> src/lib.rs:9:10
+  |
+9 | async fn get_catalog(_req: HttpRequest) -> HttpResponse<Catalog> {
+  |          ^^^^^^^^^^^
+
+    Finished test [unoptimized + debuginfo] target(s) in 3.56s
+     Running target/debug/deps/openservicebroker-c3104580c5641bb9
+
+running 1 test
+test tests::test_get_catalog ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+   Doc-tests openservicebroker
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+Test has passed ! Finally, go for the final TDD step: refactor.
