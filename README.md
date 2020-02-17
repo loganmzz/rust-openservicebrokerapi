@@ -37,3 +37,23 @@ Following Test-Driven Development, we will:
 1. implements them,
 1. optionally improves written code,
 1. and going back to (1) until specification coverage is complete
+
+
+
+## How to get started ?
+
+First, if you don't have Rust toolchains installed, just visit: https://www.rust-lang.org/tools/install. Looking for an editor ? Check [Are we (I)DE yet?](https://areweideyet.com/).
+
+Then:
+
+```
+cargo new --lib openservicebroker
+```
+
+In order to implement HTTP handlers, [actix-web](https://actix.rs/) will be used. Thus, edit `Cargo.toml` to add this dependency:
+
+```toml
+[dependencies]
+actix-web = "2.0"
+actix-rt = "1.0"
+```
