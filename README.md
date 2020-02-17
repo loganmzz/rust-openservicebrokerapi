@@ -57,3 +57,37 @@ In order to implement HTTP handlers, [actix-web](https://actix.rs/) will be used
 actix-web = "2.0"
 actix-rt = "1.0"
 ```
+
+
+
+## What about the catalog ?
+
+The first step is to expose a service catalog. It lets inform the platform about services you provide. So let's start with [`GET /v2/catalog` route](https://github.com/openservicebrokerapi/servicebroker/blob/v2.15/spec.md#route).
+
+### RED step
+
+Let's create a first test, edit `lib.rs`:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use actix_web::{http, test, dev::ResponseBody};
+    use actix_rt;
+
+    #[actix_rt::test]
+    async fn test_get_catalog() {
+        let req = test::TestRequest::get()
+                                    .uri("/v2/catalog")
+                                    .to_http_request();
+        let res = super::get_catalog(req).await;
+        assert_eq!(res.status(), http::StatusCode::OK);
+        if let ResponseBody::Body(body) = res.body() {
+            assert_eq!(body.services.len(), 0);
+        } else {
+            assert!(false, "Expected body type, but other was found");
+        }
+    }
+}
+```
+
+As usual in TDD, it won't compile as our code is empty. You can run `cargo build --tests` if you don't trust me !
