@@ -189,6 +189,8 @@ mod tests {
 }
 ```
 
+
+
 ## How to write integration tests ?
 
 In normal cases, you are supposed to continue TDD iterations until you complete specification coverage. However, it seems interesting to check validity at higher level. So let's add an integration test with `tests/get_catalog.rs`:
@@ -252,3 +254,31 @@ async fn test_get_catalog() {
 ```
 
 Thus, run `cargo test` to check all tests are passing !
+
+
+
+## What about manual/external testing ?
+
+Even with integration test, an HTTP server has never been run. Such setup prevents executing manual test or using external tools to run test suite (e.g. [Postman Test scripts](https://learning.postman.com/docs/postman/scripts/test-scripts/)).
+
+Fix it right now by adding an optional binary, edit `src/bin/dummy-servicebroker.rs`:
+
+```rust
+use openservicebroker as osb;
+
+use actix_web::{web, App, HttpServer};
+use actix_rt;
+
+#[actix_rt::main]
+async fn main() -> std::io::Result<()> {
+    HttpServer::new(|| {
+        App::new()
+            .route("/v2/catalog", web::get().to(osb::get_catalog))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
+}
+```
+
+As it's our sole binary, just run `cargo run` and open [http://localhost:8080/v2/catalog](http://localhost:8080/v2/catalog) !
