@@ -1,5 +1,7 @@
 use actix_web::{HttpRequest, HttpResponse};
+use serde::{Serialize, Deserialize};
 
+#[derive(Serialize, Deserialize)]
 pub struct Catalog {
     services: Vec<()>,
 }
@@ -14,13 +16,13 @@ impl Catalog {
     }
 }
 
-pub async fn get_catalog(_req: HttpRequest) -> HttpResponse<Catalog> {
-    HttpResponse::Ok().message_body(Catalog::new())
+pub async fn get_catalog(_req: HttpRequest) -> HttpResponse {
+    HttpResponse::Ok().json(Catalog::new())
 }
 
 #[cfg(test)]
 mod tests {
-    use actix_web::{http, test, dev::ResponseBody};
+    use actix_web::{http, test, dev::{ResponseBody, Body}};
     use actix_rt;
 
     #[actix_rt::test]
@@ -30,10 +32,15 @@ mod tests {
                                     .to_http_request();
         let res = super::get_catalog(req).await;
         assert_eq!(res.status(), http::StatusCode::OK);
-        if let ResponseBody::Body(body) = res.body() {
-            assert_eq!(body.services().len(), 0);
+        let bytes = if let ResponseBody::Body(Body::Bytes(body)) = res.body() {
+            body
         } else {
-            assert!(false, "Expected body type, but other was found");
-        }
+            panic!("Expected body type, but other was found");
+        };
+        let catalog: super::Catalog = match serde_json::from_slice(&bytes) {
+            Result::Ok(value) => value,
+            Result::Err(e) => panic!("{:?}", e),
+        };
+        assert_eq!(catalog.services().len(), 0);
     }
 }

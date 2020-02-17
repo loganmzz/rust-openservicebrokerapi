@@ -188,3 +188,67 @@ mod tests {
     }
 }
 ```
+
+## How to write integration tests ?
+
+In normal cases, you are supposed to continue TDD iterations until you complete specification coverage. However, it seems interesting to check validity at higher level. So let's add an integration test with `tests/get_catalog.rs`:
+
+```rust
+use openservicebroker as osb;
+
+use actix_web::{test, web, App};
+
+#[actix_rt::test]
+async fn main() {
+    let mut app = test::init_service(
+        App::new()
+            .route("/v2/catalog", web::get().to(osb::get_catalog)),
+    ).await;
+    let req = test::TestRequest::get().uri("/v2/catalog").to_request();
+    let catalog: osb::Catalog = test::read_response_json(&mut app, req).await;
+    assert_eq!(catalog.services().len(), 0);
+}
+```
+
+As in TDD cases, code isn't compiling. In fact, we need to introduce JSON serialization. Let's add Serde dependency into `Cargo.toml`:
+
+```toml
+[dependencies]
+serde = "1.0.104"
+serde_json = "1.0.48"
+```
+
+And update application code:
+
+```rust
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct Catalog { /* ... */ }
+
+pub async fn get_catalog(_req: HttpRequest) -> HttpResponse {
+    HttpResponse::Ok().json(Catalog::new())
+}
+```
+
+And update unit test code:
+
+```rust
+use actix_web::{http, test, dev::{ResponseBody, Body}};
+
+async fn test_get_catalog() {
+    // ...
+    let bytes = if let ResponseBody::Body(Body::Bytes(body)) = res.body() {
+        body
+    } else {
+        panic!("Expected body type, but other was found");
+    };
+    let catalog: super::Catalog = match serde_json::from_slice(&bytes) {
+        Result::Ok(value) => value,
+        Result::Err(e) => panic!("{:?}", e),
+    };
+    assert_eq!(catalog.services().len(), 0);
+}
+```
+
+Thus, run `cargo test` to check all tests are passing !
