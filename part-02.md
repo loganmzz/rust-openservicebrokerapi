@@ -199,3 +199,185 @@ struct Service;
 #[derive(Clone)]
 struct ServicePlan;
 ```
+
+
+## Let's load Catalog
+
+For developer that can hardcode Catalog, it's fine but if they want to load catalog from their environment ? using a file for example ? Let's support that !
+
+First, previous test will be reused:
+
+```rust
+// src/lib.rs
+mod tests {
+
+    fn check_catalog_provider(provider: CatalogProvider) {
+        let catalog  = provider.get_catalog();
+        // ...
+    }
+
+    #[test]
+    fn catalog_provider_static() {
+        let provider = CatalogProvider::from_static(build_catalog());
+        check_catalog_provider(provider);
+    }
+
+    #[test]
+    fn catalog_provider_file_json() {
+        let provider = CatalogProvider::from_file_json("tests/default_catalog.json");
+        check_catalog_provider(provider);
+    }
+
+}
+```
+
+And the test file:
+
+```json
+{
+    "services": [
+        {
+            "id": "mysql",
+            "name": "MySQL",
+            "description": "",
+            "tags": [],
+            "requires": [],
+            "bindable": true,
+            "metadata": {},
+            "plans": [
+                {
+                    "id": "mysql_free",
+                    "name": "MySQL (Free)",
+                    "description": "",
+                    "metadata": {}
+                },
+                {
+                    "id": "mysql_small",
+                    "name": "MySQL (Small)",
+                    "description": "",
+                    "metadata": {}
+                }
+            ]
+        },
+        {
+            "id": "pgsql",
+            "name": "PostgreSQL",
+            "description": "",
+            "tags": [],
+            "requires": [],
+            "bindable": true,
+            "metadata": {},
+            "plans": [
+                {
+                    "id": "pgsql_free",
+                    "name": "PostgreSQL (Free)",
+                    "description": "",
+                    "metadata": {}
+                },
+                {
+                    "id": "pgsql_small",
+                    "name": "PostgreSQL (Small)",
+                    "description": "",
+                    "metadata": {}
+                }
+            ]
+        }
+    ]
+}
+```
+
+And the implementation:
+
+```rust
+// src/lib.rs
+impl CatalogProvider {
+    // ...
+    fn from_file_json(path: &str) -> CatalogProvider {
+        let file = std::fs::File::open(path).expect(&format!("File '{}' not found", path));
+        let catalog: model::Catalog = serde_json::from_reader(file).expect(&format!("Invalid JSON file '{}'", path));
+        Self::from_static(catalog)
+    }
+}
+```
+
+_Note: Error management in this implementation doesn't reflect good practices. Better solution coming soon !_
+
+
+Then just refactor and move `CatalogProvider` to a `service` module.
+
+
+## Let's integrate provider
+
+`fn get_catalog()` handler is still always returning a fresh empty catalog on each call. First, adapt tests:
+
+```rust
+// src/lib.rs
+mod tests {
+    use actix_web::web;
+
+    async fn test_get_catalog() {
+        // ...
+        let provider = service::CatalogProvider::from_static(model::Catalog::new());
+        let res = get_catalog(req, web::Data::new(provider)).await;
+        // ...
+    }
+}
+
+
+// tests/get_catalog.rs
+async fn main() {
+    // ...
+        App::new()
+            .data(osb::service::CatalogProvider::from_static(osb::model::Catalog::new()))
+    // ...
+}
+
+// src/bin/dummy-servicebroker.rs
+async fn main() -> std::io::Result<()> {
+    // ...
+        App::new()
+            .data(osb::service::CatalogProvider::from_static(osb::model::Catalog::new()))
+    // ...
+}
+```
+
+Then, adapt implementation:
+
+```rust
+// src/lib.rs
+pub async fn get_catalog(_req: HttpRequest, data: web::Data<service::CatalogProvider>) -> HttpResponse {
+    HttpResponse::Ok().json(data.get_catalog())
+}
+```
+
+Re-run test to check everything works fine, then adapt `dummy-servicebroker` binary to load default catalog !
+
+Let's refactor a little bit more by defining a [`Scope`](https://docs.rs/actix-web/2.0.0/actix_web/struct.Scope.html):
+
+```rust
+// src/lib.rs
+pub fn new_scope(path: &str, catalog: service::CatalogProvider) -> actix_web::Scope {
+    actix_web::Scope::new(path)
+                     .data(catalog)
+                     .route("/v2/catalog", web::get().to(get_catalog))
+}
+
+// tests/get_catalog.rs
+        App::new()
+            .service(
+                osb::new_scope(
+                    "",
+                    osb::service::CatalogProvider::from_static(osb::model::Catalog::new())
+                )
+            )
+
+
+// src/bin/dummy-servicebroker.rs
+        App::new()
+            .service(
+                osb::new_scope(
+                    "",
+                    osb::service::CatalogProvider::from_file_json("tests/default_catalog.json")
+                )
+            )
+```

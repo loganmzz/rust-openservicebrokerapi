@@ -1,0 +1,50 @@
+{
+    "services": [
+        {
+            "id": "mysql",
+            "name": "MySQL",
+            "description": "",
+            "tags": [],
+            "requires": [],
+            "bindable": true,
+            "metadata": {},
+            "plans": [
+                {
+                    "id": "mysql_free",
+                    "name": "MySQL (Free)",
+                    "description": "",
+                    "metadata": {}
+                },
+                {
+                    "id": "mysql_small",
+                    "name": "MySQL (Small)",
+                    "description": "",
+                    "metadata": {}
+                }
+            ]
+        },
+        {
+            "id": "pgsql",
+            "name": "PostgreSQL",
+            "description": "",
+            "tags": [],
+            "requires": [],
+            "bindable": true,
+            "metadata": {},
+            "plans": [
+                {
+                    "id": "pgsql_free",
+                    "name": "PostgreSQL (Free)",
+                    "description": "",
+                    "metadata": {}
+                },
+                {
+                    "id": "pgsql_small",
+                    "name": "PostgreSQL (Small)",
+                    "description": "",
+                    "metadata": {}
+                }
+            ]
+        }
+    ]
+}
