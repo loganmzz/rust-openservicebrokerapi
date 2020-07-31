@@ -2,7 +2,10 @@ use super::model;
 
 use std::borrow::Cow;
 
+use anyhow::Result;
+use anyhow::Context;
 
+#[derive(Clone)]
 pub struct CatalogProvider {
     catalog: model::Catalog,
 }
@@ -14,10 +17,12 @@ impl CatalogProvider {
         }
     }
 
-    pub fn from_file_json(path: &str) -> CatalogProvider {
-        let file = std::fs::File::open(path).expect(&format!("File '{}' not found", path));
-        let catalog: model::Catalog = serde_json::from_reader(file).expect(&format!("Invalid JSON file '{}'", path));
-        Self::from_static(catalog)
+    pub fn from_file_json(path: &str) -> Result<CatalogProvider> {
+        let file = std::fs::File::open(path)
+                                 .with_context(|| format!("Access to catalog file '{}' has failed", path))?;
+        let catalog: model::Catalog = serde_json::from_reader(file)
+                                                 .with_context(|| format!("Can't read catalog file '{}' as JSON", path))?;
+        Ok(Self::from_static(catalog))
     }
 
     pub fn get_catalog(&self) -> Cow<model::Catalog> {
@@ -136,7 +141,14 @@ mod tests {
 
     #[test]
     fn catalog_provider_file_json() {
-        let provider = CatalogProvider::from_file_json("tests/default_catalog.json");
+        let provider = CatalogProvider::from_file_json("tests/default_catalog.json").expect("catalog load fail");
         check_catalog_provider(provider);
+    }
+
+    #[test]
+    fn catalog_provider_file_json_missing() {
+        let error = CatalogProvider::from_file_json("tests/missing_catalog.json").err().expect("catalog load MUST fail");
+        let ioerror = error.downcast_ref::<std::io::Error>().expect("catalog load error must be an I/O one");
+        assert_eq!(std::io::ErrorKind::NotFound, ioerror.kind());
     }
 }

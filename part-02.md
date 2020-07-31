@@ -381,3 +381,119 @@ pub fn new_scope(path: &str, catalog: service::CatalogProvider) -> actix_web::Sc
                 )
             )
 ```
+
+##  Let's handle the errors
+
+Before going further with `CatalogProvider`, error handling must be improved. For the moment [`expect(..)`](https://doc.rust-lang.org/std/result/enum.Result.html#method.expect) is used but it panics on failure, causing a fatal error (aka a "crash") of the application with no chance to:
+
+* provide a detailed message to final user (not developer using library),
+* let developers catch errors and handling them as they wish.
+
+In Rust, [`Result` struct](https://doc.rust-lang.org/std/result/enum.Result.html) and [`Error` trait](https://doc.rust-lang.org/std/error/trait.Error.html) are used for catchable failures. A very simple improvement can be:
+
+```rust
+// src/service.rs
+    pub fn from_file_json(path: &str) -> Result<CatalogProvider, Box<dyn Error + 'static>> {
+        let file = std::fs::File::open(path)?;
+        let catalog: model::Catalog = serde_json::from_reader(file)?;
+        Ok(Self::from_static(catalog))
+    }
+
+    #[test]
+    fn catalog_provider_file_json() {
+        let provider = CatalogProvider::from_file_json("tests/default_catalog.json").expect("catalog load failed");
+        check_catalog_provider(provider);
+    }
+
+    // new !
+    #[test]
+    fn catalog_provider_file_json_missing() {
+        let error = CatalogProvider::from_file_json("tests/missing_catalog.json").err().expect("catalog load MUST fail");
+        let ioerror = error.downcast_ref::<std::io::Error>().expect("catalog load error must be an I/O one");
+        assert_eq!(std::io::ErrorKind::NotFound, ioerror.kind());
+    }
+
+// src/bin/dummy-servicebroker.rs
+                osb::new_scope(
+                    "",
+                    osb::service::CatalogProvider::from_file_json("tests/default_catalog.json")
+                                                  .expect("Error on loading default catalog")
+                )
+```
+
+Due to some limitations of Actix (closure factory can't fail and may be called many times), changes to our dummy Service Broker is more important:
+
+```rust
+// src/service.rs
+#[derive(Clone)]
+pub struct CatalogProvider
+
+// src/bin/dummy-servicebroker.rs
+#[actix_rt::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + 'static>> {
+    let catalog = osb::service::CatalogProvider::from_file_json("tests/default_catalog.json")?;
+    HttpServer::new(move || {
+        App::new()
+            .service(osb::new_scope("", catalog.clone()))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await?;
+    Ok(())
+}
+```
+
+Using `Box<dyn Error + 'static>` can be enough but to display context, you still need to encapsulate errors with your own types. Otherwise, consumers (i.e. developers) will have to dig into error stack recursively using [`source`](https://doc.rust-lang.org/std/error/trait.Error.html#method.source).
+
+[`anyhow` crate](https://crates.io/crates/anyhow) provides facilities to help on the topic. First add it to `Cargo.toml`:
+
+```toml
+[dependencies]
+anyhow = "1.0.32"
+```
+
+Then, replace `Result<T, Box<dyn Error + 'static>>` by `anyhow::Result<T>`:
+
+```rust
+// src/service.rs
+use anyhow::Result;
+
+    pub fn from_file_json(path: &str) -> Result<CatalogProvider> {
+        let file = std::fs::File::open(path)?;
+        let catalog: model::Catalog = serde_json::from_reader(file)?;
+        Ok(Self::from_static(catalog))
+    }
+
+// src/bin/dummy-servicebroker.ts
+use anyhow::Result;
+
+async fn main() -> Result<()> {
+    // ...
+}
+```
+
+_Note: You may notice that except type, no other changes are required !_
+
+Finally, adds [`Context`](https://docs.rs/anyhow/1.0.32/anyhow/trait.Context.html) to fallible code:
+
+```rust
+// src/service.rs
+use anyhow::Context;
+
+    pub fn from_file_json(path: &str) -> Result<CatalogProvider> {
+        let file = std::fs::File::open(path)
+                                 .with_context(|| format!("Access to catalog file '{}' has failed", path))?;
+        let catalog: model::Catalog = serde_json::from_reader(file)
+                                                 .with_context(|| format!("Can't read catalog file '{}' as JSON", path))?;
+        Ok(Self::from_static(catalog))
+    }
+
+// src/bin/dummy-servicebroker.ts
+use anyhow::Context;
+
+async fn main() -> Result<()> {
+    let catalog = osb::service::CatalogProvider::from_file_json("tests/default_catalog.json")
+                                                .with_context(|| "Error on loading default catalog")?;
+    // ...
+}
+```
