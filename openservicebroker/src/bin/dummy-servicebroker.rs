@@ -1,4 +1,5 @@
 use openservicebroker as osb;
+use osb::service::CatalogProvider;
 
 use actix_web::{App, HttpServer};
 use actix_rt;
@@ -8,11 +9,12 @@ use anyhow::Context;
 
 #[actix_rt::main]
 async fn main() -> Result<()> {
-    let catalog = osb::service::CatalogProvider::from_file_json("tests/default_catalog.json")
-                                                .with_context(|| "Error on loading default catalog")?;
+    let catalog = osb::service::providers::catalog::file_json("tests/default_catalog.json")
+                                                   .to_single()
+                                                   .with_context(|| "Error on loading default catalog")?;
     HttpServer::new(move || {
         App::new()
-            .service(osb::new_scope("", catalog.clone()))
+            .service(osb::new_scope("", Box::new(catalog.clone())))
     })
     .bind("127.0.0.1:8080")?
     .run()

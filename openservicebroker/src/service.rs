@@ -5,34 +5,86 @@ use std::borrow::Cow;
 use anyhow::Result;
 use anyhow::Context;
 
+pub trait CatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>>;
+
+
+    fn to_single(&self) -> Result<SingleCatalogProvider> {
+        self.get_catalog()
+            .map(|cow| match cow {
+                Cow::Owned(catalog)        => catalog,
+                Cow::Borrowed(catalog)     => catalog.clone(),
+            })
+            .map(|catalog| SingleCatalogProvider::new(catalog))
+    }
+}
+
 #[derive(Clone)]
-pub struct CatalogProvider {
+pub struct SingleCatalogProvider {
     catalog: model::Catalog,
 }
 
-impl CatalogProvider {
-    pub fn from_static(catalog: model::Catalog) -> CatalogProvider {
-        CatalogProvider {
+impl SingleCatalogProvider {
+
+    pub fn new(catalog: model::Catalog) -> Self {
+        Self {
             catalog,
         }
     }
+}
 
-    pub fn from_file_json(path: &str) -> Result<CatalogProvider> {
+impl CatalogProvider for SingleCatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        Ok(Cow::Borrowed(&self.catalog))
+    }
+}
+
+#[derive(Clone)]
+pub struct JsonFileCatalogProvider {
+    path: String,
+}
+
+impl JsonFileCatalogProvider {
+    pub fn new(path: &str) -> Self {
+        JsonFileCatalogProvider {
+            path: path.to_owned()
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl CatalogProvider for JsonFileCatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        let path = self.path();
         let file = std::fs::File::open(path)
                                  .with_context(|| format!("Access to catalog file '{}' has failed", path))?;
         let catalog: model::Catalog = serde_json::from_reader(file)
                                                  .with_context(|| format!("Can't read catalog file '{}' as JSON", path))?;
-        Ok(Self::from_static(catalog))
-    }
-
-    pub fn get_catalog(&self) -> Cow<model::Catalog> {
-        Cow::Borrowed(&self.catalog)
+        Ok(Cow::Owned(catalog))
     }
 }
 
+pub mod providers {
+    pub mod catalog {
+        use super::super::{model, SingleCatalogProvider, JsonFileCatalogProvider};
+
+        pub fn single(catalog: model::Catalog) -> SingleCatalogProvider {
+            SingleCatalogProvider::new(catalog)
+        }
+
+        pub fn file_json(path: &str) -> JsonFileCatalogProvider {
+            JsonFileCatalogProvider::new(path)
+        }
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
-    use super::{model, CatalogProvider};
+    use super::{model, CatalogProvider, SingleCatalogProvider, JsonFileCatalogProvider};
 
     fn build_catalog() -> model::Catalog {
         let mut catalog = model::Catalog::new();
@@ -77,8 +129,8 @@ mod tests {
 
 
 
-    fn check_catalog_provider(provider: CatalogProvider) {
-        let catalog  = provider.get_catalog();
+    fn check_catalog_provider(provider: &dyn CatalogProvider) {
+        let catalog  = provider.get_catalog().expect("Error on retrieving catalog");
         let mut services = catalog.services().iter();
 
 
@@ -135,19 +187,20 @@ mod tests {
 
     #[test]
     fn catalog_provider_static() {
-        let provider = CatalogProvider::from_static(build_catalog());
-        check_catalog_provider(provider);
+        let provider = SingleCatalogProvider::new(build_catalog());
+        check_catalog_provider(&provider);
     }
 
     #[test]
-    fn catalog_provider_file_json() {
-        let provider = CatalogProvider::from_file_json("tests/default_catalog.json").expect("catalog load fail");
-        check_catalog_provider(provider);
+    fn catalog_provider_dynamic_file_json() {
+        let provider = JsonFileCatalogProvider::new("tests/default_catalog.json");
+        check_catalog_provider(&provider);
     }
 
     #[test]
-    fn catalog_provider_file_json_missing() {
-        let error = CatalogProvider::from_file_json("tests/missing_catalog.json").err().expect("catalog load MUST fail");
+    fn catalog_provider_dynamic_file_json_missing() {
+        let provider = JsonFileCatalogProvider::new("tests/missing_catalog.json");
+        let error = provider.get_catalog().err().expect("catalog load MUST fail");
         let ioerror = error.downcast_ref::<std::io::Error>().expect("catalog load error must be an I/O one");
         assert_eq!(std::io::ErrorKind::NotFound, ioerror.kind());
     }

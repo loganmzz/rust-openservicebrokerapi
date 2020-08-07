@@ -497,3 +497,324 @@ async fn main() -> Result<()> {
     // ...
 }
 ```
+
+
+## Let's open catalog provider API
+
+Java language has popularized the [SPI (Service Provider Interface) pattern](https://en.wikipedia.org/wiki/Service_provider_interface). In this concept, some parts of your library is abstracted through interfaces (or `trait`). And everyone can provide implementations to extend your library capabilities (i.e. integrating with new librairies or providers). It also may be combined with service discovery for easier integration.
+
+So transform `CatalogProvider` from a `struct` to a `trait`:
+
+```rust
+// src/service.rs
+pub trait CatalogProvider {
+    fn get_catalog(&self) -> Cow<model::Catalog>;
+}
+
+#[derive(Clone)]
+pub struct SingleCatalogProvider {
+    catalog: model::Catalog,
+}
+
+impl SingleCatalogProvider {
+
+    pub fn from_static(catalog: model::Catalog) -> SingleCatalogProvider {
+        SingleCatalogProvider {
+            catalog,
+        }
+    }
+
+    pub fn from_file_json(path: &str) -> Result<SingleCatalogProvider> {
+        // ...
+    }
+}
+
+impl CatalogProvider for SingleCatalogProvider {
+    fn get_catalog(&self) -> Cow<model::Catalog> {
+        Cow::Borrowed(&self.catalog)
+    }
+}
+
+mod tests {
+    use super::SingleCatalogProvider;
+
+    // ...
+
+    fn check_catalog_provider(provider: SingleCatalogProvider) {
+        // ...
+    }
+
+    fn catalog_provider_static() {
+        let provider = SingleCatalogProvider::from_static(build_catalog());
+        // ...
+    }
+
+    fn catalog_provider_file_json() {
+        let provider = SingleCatalogProvider::from_file_json("tests/default_catalog.json").expect("catalog load fail");
+        // ...
+    }
+
+    fn catalog_provider_file_json_missing() {
+        let error = SingleCatalogProvider::from_file_json("tests/missing_catalog.json").err().expect("catalog load MUST fail");
+        // ...
+    }
+}
+
+
+// src/lib.rs
+pub fn new_scope(path: &str, catalog: Box<dyn service::CatalogProvider>) -> actix_web::Scope {}
+pub async fn get_catalog(_req: HttpRequest, data: web::Data<Box<dyn service::CatalogProvider>>) -> HttpResponse {}
+
+mod tests {
+    // ...
+
+    async fn test_get_catalog() {
+        // ...
+        let provider = service::SingleCatalogProvider::from_static(model::Catalog::new());
+        let res = get_catalog(req, web::Data::new(Box::new(provider))).await;
+        // ...
+    }
+}
+
+
+// tests/get_catalog.rs
+async fn main() {
+    let catalog = osb::service::SingleCatalogProvider::from_static(osb::model::Catalog::new());
+    let mut app = test::init_service(
+        App::new()
+            .service(osb::new_scope("", Box::new(catalog)))
+    ).await;
+    // ...
+}
+
+
+// src/bin/dummy-servicebroker.rs
+async fn main() -> Result<()> {
+    let catalog = osb::service::SingleCatalogProvider::from_file_json("tests/default_catalog.json")
+                                                      .with_context(|| "Error on loading default catalog")?;
+    HttpServer::new(move || {
+        App::new()
+            .service(osb::new_scope("", Box::new(catalog.clone())))
+    })
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await?;
+    Ok(())
+}
+```
+
+Now that `CatalogProvider` is abstracted, it's possible to transform file-based from a static (loaded on creation) to a dynamic version (loaded on each call):
+
+```rust
+// src/service.rs
+#[derive(Clone)]
+pub struct JsonFileCatalogProvider {
+    path: String,
+}
+
+impl JsonFileCatalogProvider {
+    pub fn new(path: &str) -> Self {
+        JsonFileCatalogProvider {
+            path: path.to_owned()
+        }
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl CatalogProvider for JsonFileCatalogProvider {
+    fn get_catalog(&self) -> Cow<model::Catalog> {
+        let path = self.path();
+        let file = std::fs::File::open(path)
+                                 .with_context(|| format!("Access to catalog file '{}' has failed", path))
+                                 .expect("");
+        let catalog: model::Catalog = serde_json::from_reader(file)
+                                                 .with_context(|| format!("Can't read catalog file '{}' as JSON", path))
+                                                 .expect("");
+        Cow::Owned(catalog)
+    }
+}
+
+mod tests {
+    use super::JsonFileCatalogProvider;
+
+    fn check_catalog_provider(provider: &dyn CatalogProvider) {}
+
+    fn catalog_provider_static() {
+        // ...
+        check_catalog_provider(&provider);
+    }
+
+    fn catalog_provider_file_json() {
+        // ...
+        check_catalog_provider(&provider);
+    }
+
+    #[test]
+    fn catalog_provider_dynamic_file_json() {
+        let provider = JsonFileCatalogProvider::new("tests/default_catalog.json");
+        check_catalog_provider(&provider);
+    }
+
+    #[test]
+    fn catalog_provider_dynamic_file_json_missing() {
+        let provider = JsonFileCatalogProvider::new("tests/default_catalog2.json");
+        let result = std::panic::catch_unwind(|| provider.get_catalog());
+        assert!(result.is_err());
+    }
+}
+```
+
+However, there's one major issue: error handling. Let's reapply the previously-shown fallible pattern with `anyhow::Result`:
+
+```rust
+// src/service.rs
+pub trait CatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>>;
+}
+
+impl CatalogProvider for SingleCatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        Ok(Cow::Borrowed(&self.catalog))
+    }
+}
+
+impl CatalogProvider for JsonFileCatalogProvider {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        let path = self.path();
+        let file = std::fs::File::open(path)
+                                 .with_context(|| format!("Access to catalog file '{}' has failed", path))?;
+        let catalog: model::Catalog = serde_json::from_reader(file)
+                                                 .with_context(|| format!("Can't read catalog file '{}' as JSON", path))?;
+        Ok(Cow::Owned(catalog))
+    }
+}
+
+mod tests {
+    fn check_catalog_provider(provider: &dyn CatalogProvider) {
+        let catalog  = provider.get_catalog().expect("Error on retrieving catalog");
+        // ...
+    }
+
+    #[test]
+    fn catalog_provider_dynamic_file_json_missing() {
+        let provider = JsonFileCatalogProvider::new("tests/missing_catalog.json");
+        let error = provider.get_catalog().err().expect("catalog load must fail");
+        let ioerror = error.downcast_ref::<std::io::Error>().expect("catalog load error must be an I/O one");
+        assert_eq!(std::io::ErrorKind::NotFound, ioerror.kind());
+    }
+}
+
+
+// src/lib.rs
+pub async fn get_catalog(_req: HttpRequest, data: web::Data<Box<dyn service::CatalogProvider>>) -> HttpResponse {
+    match data.get_catalog() {
+        Ok(catalog) => HttpResponse::Ok().json(catalog),
+        Err(error)  => {
+            eprintln!("ERROR: {:?}", error);
+            HttpResponse::InternalServerError().finish()
+        },
+    }
+
+}
+
+mod tests {
+    #[actix_rt::test]
+    async fn test_get_catalog_missing() {
+
+        let req = test::TestRequest::get()
+                                    .uri("/v2/catalog")
+                                    .to_http_request();
+        let provider = service::JsonFileCatalogProvider::new("tests/missing_catalog.json");
+        let res = get_catalog(req, web::Data::new(Box::new(provider))).await;
+        assert_eq!(res.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+        match res.body() {
+            ResponseBody::Body(body)  => match body {
+                Body::Empty => (),
+                _           => panic!("Unexpected body type ({:?})", body),
+            },
+            ResponseBody::Other(body) => panic!("Found response body of type other ({:?})", body),
+        };
+    }
+}
+
+
+// tests/get_catalog.rs
+use actix_web::{test, App, http::StatusCode, body::{Body, ResponseBody}};
+
+#[actix_rt::test]
+async fn missing() {
+    let catalog = osb::service::JsonFileCatalogProvider::new("tests/missing_catalog.json");
+    let mut app = test::init_service(
+        App::new()
+            .service(osb::new_scope("", Box::new(catalog)))
+    ).await;
+    let req = test::TestRequest::get().uri("/v2/catalog").to_request();
+    let mut res = test::call_service(&mut app, req).await;
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    match res.take_body() {
+        ResponseBody::Body(body)  => match body {
+            Body::Empty => (),
+            _           => panic!("Unexpected body type ({:?})", body),
+        },
+        ResponseBody::Other(body) => panic!("Found response body of type other ({:?})", body),
+    };
+}
+```
+
+Finally, let's reorganize things:
+
+```rust
+// src/service.rs
+pub trait CatalogProvider {
+    fn to_single(&self) -> Result<SingleCatalogProvider> {
+        self.get_catalog()
+            .map(|cow| match cow {
+                Cow::Owned(catalog)        => catalog,
+                Cow::Borrowed(catalog)     => catalog.clone(),
+            })
+            .map(|catalog| SingleCatalogProvider::new(catalog))
+    }
+}
+
+impl SingleCatalogProvider {
+    // Rename: from_static-> new
+    pub fn new(catalog: model::Catalog) -> SingleCatalogProvider { /* ... */ }
+
+    // Delete
+    //pub fn from_file_json(path: &str) -> Result<SingleCatalogProvider> { ... }
+}
+
+pub mod providers {
+    pub mod catalog {
+        use super::super::{model, SingleCatalogProvider, JsonFileCatalogProvider};
+
+        pub fn single(catalog: model::Catalog) -> SingleCatalogProvider {
+            SingleCatalogProvider::new(catalog)
+        }
+
+        pub fn file_json(path: &str) -> JsonFileCatalogProvider {
+            JsonFileCatalogProvider::new(path)
+        }
+    }
+}
+
+mod tests {
+    // Delete
+    // fn catalog_provider_file_json()
+    // fn catalog_provider_file_json_missing()
+}
+
+
+// src/bin/dummy-servicebroker.rs
+use osb::service::CatalogProvider; // Enable `to_single` function
+
+async fn main() -> Result<()> {
+    let catalog = osb::service::providers::catalog::file_json("tests/default_catalog.json")
+                                                   .to_single()
+                                                   .with_context(|| "Error on loading default catalog")?;
+    // ...
+}
+```
