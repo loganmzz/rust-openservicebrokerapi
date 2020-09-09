@@ -818,3 +818,91 @@ async fn main() -> Result<()> {
     // ...
 }
 ```
+
+
+## Let's cache Catalog Provider result
+
+As Catalog Provider API has now been opened, it's easy to extend. In last examples, JSON file Catalog Provider has been used and result has been directly put in cache at initialization through `to_single()` method. However, why not do it lazily (i.e. on first call) ?
+
+As fetching catalog isn't supposed to mutate provider, then [interior mutability](https://doc.rust-lang.org/reference/interior-mutability.html) must be used:
+
+```rust
+// src/service.rs
+pub struct CachingCatalogProvider<T: CatalogProvider> {
+    provider: T,
+    cache: std::cell::RefCell<Option<SingleCatalogProvider>>,
+}
+
+impl<T: CatalogProvider> CachingCatalogProvider<T> {
+    pub fn new(provider: T) -> Self {
+        CachingCatalogProvider {
+            provider,
+            cache: std::cell::RefCell::default(),
+        }
+    }
+}
+
+impl<T: CatalogProvider> CatalogProvider for CachingCatalogProvider<T> {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        if let Some(provider) = self.cache.borrow().as_ref() {
+            let catalog = provider.get_catalog()?;
+            return Ok(Cow::Owned(catalog.into_owned()))
+        }
+        let caching = self.provider.to_single()?;
+        *self.cache.borrow_mut() = Some(caching);
+        self.get_catalog()
+    }
+}
+
+pub mod providers {
+    pub mod catalog {
+        use super::super::{CatalogProvider, CachingCatalogProvider};
+
+        pub fn cache<T: CatalogProvider>(provider: T) -> CachingCatalogProvider<T> {
+            CachingCatalogProvider::new(provider)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CachingCatalogProvider;
+    use anyhow::Result;
+
+    #[test]
+    fn catalog_provider_caching() {
+        struct Counting<'a> {
+            count: &'a std::cell::Cell<u32>,
+        }
+        impl<'a> Counting<'a> {
+            fn new(count: &'a std::cell::Cell<u32>) -> Self {
+                Counting {
+                    count
+                }
+            }
+        }
+        impl<'a> CatalogProvider for Counting<'a> {
+            fn get_catalog(&self) -> Result<std::borrow::Cow<model::Catalog>> {
+                self.count.set(self.count.get() + 1);
+                Ok(std::borrow::Cow::Owned(model::Catalog::new()))
+            }
+        }
+        let counter = std::cell::Cell::default();
+
+        let cache   = CachingCatalogProvider::new(Counting::new(&counter));
+        assert_eq!(0, counter.get());
+
+        assert!(cache.get_catalog().is_ok());
+        assert_eq!(1, counter.get());
+
+        assert!(cache.get_catalog().is_ok());
+        assert_eq!(1, counter.get());
+    }
+}
+```
+
+Maybe some explanations is needed. [`RefCell`](https://doc.rust-lang.org/std/cell/struct.RefCell.html) let us store  a value which references can be manipulated in controlled scope (i.e. blocks). Borrow rules are dynamically (i.e. at runtime) checked. Thus, we first check if there's some cached catalog holder (i.e. `SingleCatalogProvider`) and returns its catalog. Otherwise, read borrow is dropped, and a write/mutable one is temporary obtain to update with cached catalog holder. Finally, recursively call the function to avoid repeating read code.
+
+For testing, a counting caller is implemented, still using interior mutability pattern. Then, just check there's no call during caching creation (i.e. lazy behavior) and call only once even if asked twice (i.e. cache behavior).
+
+Note that this implementation doesn't support [multithreading](https://doc.rust-lang.org/book/ch16-04-extensible-concurrency-sync-and-send.html), which is not a problem as Actix will instantiate a new scope for each worker thread (add a `println!("...")` into `HttpServer::new()` closure to observe it).

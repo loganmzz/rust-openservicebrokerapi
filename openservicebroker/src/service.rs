@@ -8,7 +8,6 @@ use anyhow::Context;
 pub trait CatalogProvider {
     fn get_catalog(&self) -> Result<Cow<model::Catalog>>;
 
-
     fn to_single(&self) -> Result<SingleCatalogProvider> {
         self.get_catalog()
             .map(|cow| match cow {
@@ -67,9 +66,35 @@ impl CatalogProvider for JsonFileCatalogProvider {
     }
 }
 
+pub struct CachingCatalogProvider<T: CatalogProvider> {
+    provider: T,
+    cache: std::cell::RefCell<Option<SingleCatalogProvider>>,
+}
+
+impl<T: CatalogProvider> CachingCatalogProvider<T> {
+    pub fn new(provider: T) -> Self {
+        CachingCatalogProvider {
+            provider,
+            cache: std::cell::RefCell::default(),
+        }
+    }
+}
+
+impl<T: CatalogProvider> CatalogProvider for CachingCatalogProvider<T> {
+    fn get_catalog(&self) -> Result<Cow<model::Catalog>> {
+        if let Some(provider) = self.cache.borrow().as_ref() {
+            let catalog = provider.get_catalog()?;
+            return Ok(Cow::Owned(catalog.into_owned()))
+        }
+        let caching = self.provider.to_single()?;
+        *self.cache.borrow_mut() = Some(caching);
+        self.get_catalog()
+    }
+}
+
 pub mod providers {
     pub mod catalog {
-        use super::super::{model, SingleCatalogProvider, JsonFileCatalogProvider};
+        use super::super::{model, CatalogProvider, SingleCatalogProvider, JsonFileCatalogProvider, CachingCatalogProvider};
 
         pub fn single(catalog: model::Catalog) -> SingleCatalogProvider {
             SingleCatalogProvider::new(catalog)
@@ -78,13 +103,18 @@ pub mod providers {
         pub fn file_json(path: &str) -> JsonFileCatalogProvider {
             JsonFileCatalogProvider::new(path)
         }
+
+        pub fn cache<T: CatalogProvider>(provider: T) -> CachingCatalogProvider<T> {
+            CachingCatalogProvider::new(provider)
+        }
     }
 }
 
 
 #[cfg(test)]
 mod tests {
-    use super::{model, CatalogProvider, SingleCatalogProvider, JsonFileCatalogProvider};
+    use super::{model, CatalogProvider, SingleCatalogProvider, JsonFileCatalogProvider, CachingCatalogProvider};
+    use anyhow::Result;
 
     fn build_catalog() -> model::Catalog {
         let mut catalog = model::Catalog::new();
@@ -203,5 +233,35 @@ mod tests {
         let error = provider.get_catalog().err().expect("catalog load MUST fail");
         let ioerror = error.downcast_ref::<std::io::Error>().expect("catalog load error must be an I/O one");
         assert_eq!(std::io::ErrorKind::NotFound, ioerror.kind());
+    }
+
+    #[test]
+    fn catalog_provider_caching() {
+        struct Counting<'a> {
+            count: &'a std::cell::Cell<u32>,
+        }
+        impl<'a> Counting<'a> {
+            fn new(count: &'a std::cell::Cell<u32>) -> Self {
+                Counting {
+                    count
+                }
+            }
+        }
+        impl<'a> CatalogProvider for Counting<'a> {
+            fn get_catalog(&self) -> Result<std::borrow::Cow<model::Catalog>> {
+                self.count.set(self.count.get() + 1);
+                Ok(std::borrow::Cow::Owned(model::Catalog::new()))
+            }
+        }
+        let counter = std::cell::Cell::default();
+
+        let cache   = CachingCatalogProvider::new(Counting::new(&counter));
+        assert_eq!(0, counter.get());
+
+        assert!(cache.get_catalog().is_ok());
+        assert_eq!(1, counter.get());
+
+        assert!(cache.get_catalog().is_ok());
+        assert_eq!(1, counter.get());
     }
 }
