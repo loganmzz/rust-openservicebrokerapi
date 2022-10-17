@@ -30,7 +30,7 @@ Learn more about `rust-toolchain[.toml]` file in [Overrides chapter from rustup 
 
 Now, run `cargo test` to check everything is fine.
 
-## Upgrade Actix Web to 3.0.0
+## Upgrade Actix Web to 3.3.3
 
 Actix is our most important dependency, it's the framework that provide Web protocol to access our OpenServiceBroker API. Several releases including two majors since the [`2.0`](https://github.com/actix/actix-web/releases/tag/web-v2.0.0) we are using.
 
@@ -124,4 +124,13 @@ cargo update -p once_cell          --precise 1.12.0 &&
 true
 ```
 
-Finally, to check everything is fine: `cargo test` !
+Then, to check everything is fine: `cargo test` !
+
+Now, move to latest [`3.3.3`](https://crates.io/crates/actix-web/3.3.3) to complete the `3.x` upgrade:
+
+```toml
+[dependencies]
+actix-web = "=3.3.3"
+```
+
+Finally, to check everything is fine: `cargo test` ! And we are ready to bump to the next major version !
