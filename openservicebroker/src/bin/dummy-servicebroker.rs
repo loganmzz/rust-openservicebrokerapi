@@ -2,12 +2,11 @@ use openservicebroker as osb;
 use osb::service::CatalogProvider;
 
 use actix_web::{App, HttpServer};
-use actix_rt;
 
 use anyhow::Result;
 use anyhow::Context;
 
-#[actix_rt::main]
+#[actix_web::main]
 async fn main() -> Result<()> {
     let catalog = osb::service::providers::catalog::file_json("tests/default_catalog.json")
                                                    .to_single()
