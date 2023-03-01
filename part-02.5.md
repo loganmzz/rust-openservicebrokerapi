@@ -134,3 +134,169 @@ actix-web = "=3.3.3"
 ```
 
 Finally, to check everything is fine: `cargo test` ! And we are ready to bump to the next major version !
+
+## Upgrade Actix Web to 4.3.1
+
+As previously, start by bumping to `4.0.0`:
+
+```toml
+[dependencies]
+actix-web = "=4.0.0"
+```
+
+Starting from this major, directly depending on `actix-rt` is no more required as it also re-export `actix_rt::test` macro:
+
+```toml
+[dependencies]
+#actix-rt = "1.0"
+```
+
+```rust
+// src/lib.rs
+mod tests {
+    // use actix_rt;
+
+    #[actix_web::test]
+    async fn test_get_catalog() {}
+
+    #[actix_web::test]
+    async fn test_get_catalog_missing() {}
+}
+
+// tests/get_catalog.rs
+#[actix_web::test]
+async fn ok() {}
+
+#[actix_web::test]
+async fn missing() {}
+```
+
+Also updates Rust version into `rust-toolchain` file:
+
+```text
+1.54.0
+```
+
+Then, as usual execute `cargo test`:
+
+```text
+error: failed to download `hashbrown v0.12.3`
+
+Caused by:
+  unable to get packages from source
+
+Caused by:
+  failed to parse manifest at `/home/logan/.cargo/registry/src/github.com-1ecc6299db9ec823/hashbrown-0.12.3/Cargo.toml`
+
+Caused by:
+  feature `edition2021` is required
+
+  this Cargo does not support nightly features, but if you
+  switch to nightly channel you can add
+  `cargo-features = ["edition2021"]` to enable this feature
+```
+
+And the magic formula:
+
+```bash
+cargo update -p actix-http          --precise 3.0.0   &&
+cargo update -p h2                  --precise 0.3.9   &&
+cargo update -p indexmap            --precise 1.5.2   &&
+cargo update -p hashbrown           --precise 0.8.1   &&
+cargo update -p ahash               --precise 0.7.4   &&
+cargo update -p tracing             --precise 0.1.30  &&
+cargo update -p tracing-core        --precise 0.1.22  &&
+cargo update -p once_cell           --precise 1.5.2   &&
+cargo update -p itoa:0.4.5          --precise 0.4.7   &&
+cargo update -p time                --precise 0.3.5   &&
+cargo update -p actix-web-codegen   --precise 4.0.0   &&
+true
+```
+
+Finally, issues come from our own outdated code, refresh it !
+
+Starts with `Cargo.toml`:
+
+```toml
+[dependencies]
+serde = { version = "1.0.104", features = ["derive"] }
+```
+
+Next, [application data](https://docs.rs/actix-web/4.0.0/actix_web/struct.App.html#method.app_data) (i.e. state) must be wrapped into [actix_web::web::Data](https://docs.rs/actix-web/4.0.0/actix_web/web/struct.Data.html):
+
+```rust
+// src/lib.rs
+pub fn new_scope(path: &str, catalog: Box<dyn service::CatalogProvider>) -> actix_web::Scope {
+    actix_web::Scope::new(path)
+                     .app_data(web::Data::new(catalog))
+                     .route("/v2/catalog", web::get().to(get_catalog))
+}
+```
+
+Afterward, [response body handling](https://docs.rs/actix-web/4.0.0/actix_web/struct.HttpResponse.html#method.body) must be updated:
+
+```rust
+// src/lib.rs
+mod tests {
+    use actix_web::{body::{MessageBody}, http, test, web};
+
+    #[actix_web::test]
+    async fn test_get_catalog() {
+        // ...
+        assert_eq!(res.status(), http::StatusCode::OK);
+        let bytes = res.into_body().try_into_bytes().expect("Unable to get body bytes");
+        // ...
+    }
+
+    #[actix_web::test]
+    async fn test_get_catalog_missing() {
+        // ...
+        assert_eq!(res.status(), http::StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = res.into_body().try_into_bytes().expect("Expected body type, but other was found");
+        if bytes.len() != 0 {
+            panic!("Unexpected body ({:?})", bytes);
+        }
+    }
+}
+
+// tests/get_catalog.rs
+use actix_web::{test, App, http::StatusCode, body::{MessageBody}};
+
+#[actix_web::test]
+async fn ok() {
+    // ...
+    let catalog: osb::model::Catalog = test::call_and_read_body_json(&mut app, req).await;
+    // ...
+}
+
+#[actix_web::test]
+async fn missing() {
+    // ...
+    let res = test::call_service(&mut app, req).await;
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = res.into_body().try_into_bytes().expect("Expected body type, but other was found");
+    if bytes.len() != 0 {
+        panic!("Unexpected body ({:?})", bytes);
+    }
+}
+```
+
+Then, `cargo test` ! Now, the last step: bump `actix-web` to latest version `4.3.1`:
+
+
+```toml
+[dependencies]
+actix-web = "=4.3.1"
+```
+
+This require to update Rust version into `rust-toolchain` file:
+
+```text
+1.57.0
+```
+
+Finally, for the last time:
+
+```bash
+cargo clean && cargo test
+```
